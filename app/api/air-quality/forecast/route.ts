@@ -14,6 +14,6 @@ export async function GET(req: NextRequest) {
       timestamp: new Date().toISOString(),
     });
   } catch (err) {
-    return errorRes(err instanceof Error ? err.message : 'Failed to fetch forecast');
+    return errorRes('Failed to fetch forecast', 500, err);
   }
 }

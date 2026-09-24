@@ -19,7 +19,7 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     const parsed = scenarioSchema.safeParse(body);
     if (!parsed.success) {
-      return errorRes(`Invalid input: ${parsed.error.message}`, 400);
+      return errorRes('Invalid input', 400, parsed.error);
     }
     const { location, result } = getScenarioForApi(parsed.data.locationId, parsed.data);
     return jsonRes({
@@ -28,6 +28,6 @@ export async function POST(req: NextRequest) {
       timestamp: new Date().toISOString(),
     });
   } catch (err) {
-    return errorRes(err instanceof Error ? err.message : 'Failed to run simulation');
+    return errorRes('Failed to run simulation', 500, err);
   }
 }

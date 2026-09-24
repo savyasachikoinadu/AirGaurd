@@ -26,6 +26,6 @@ export async function GET(req: NextRequest) {
       timestamp: new Date().toISOString(),
     });
   } catch (err) {
-    return errorRes(err instanceof Error ? err.message : 'Failed to fetch sensors');
+    return errorRes('Failed to fetch sensors', 500, err);
   }
 }

@@ -17,6 +17,6 @@ export async function GET(req: NextRequest) {
       timestamp: new Date().toISOString(),
     });
   } catch (err) {
-    return errorRes(err instanceof Error ? err.message : 'Failed to fetch explanation');
+    return errorRes('Failed to fetch explanation', 500, err);
   }
 }

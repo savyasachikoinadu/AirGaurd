@@ -13,6 +13,6 @@ export async function GET(req: NextRequest) {
       timestamp: new Date().toISOString(),
     });
   } catch (err) {
-    return errorRes(err instanceof Error ? err.message : 'Failed to fetch alerts');
+    return errorRes('Failed to fetch alerts', 500, err);
   }
 }

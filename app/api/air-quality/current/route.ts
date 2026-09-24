@@ -42,6 +42,6 @@ export async function GET(req: NextRequest) {
       freshness: 'Live demo data - generated on request',
     });
   } catch (err) {
-    return errorRes(err instanceof Error ? err.message : 'Failed to fetch current air quality');
+    return errorRes('Failed to fetch current air quality', 500, err);
   }
 }

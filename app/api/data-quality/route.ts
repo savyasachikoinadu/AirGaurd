@@ -1,4 +1,4 @@
-import { getDataQualityForApi, getAllLocations, jsonRes } from '@/lib/api/helpers';
+import { getDataQualityForApi, getAllLocations, jsonRes, errorRes } from '@/lib/api/helpers';
 
 export const dynamic = 'force-dynamic';
 
@@ -13,6 +13,6 @@ export async function GET() {
       timestamp: new Date().toISOString(),
     });
   } catch (err) {
-    return jsonRes({ error: err instanceof Error ? err.message : 'Failed' }, 500);
+    return errorRes('Failed to fetch data quality', 500, err);
   }
 }

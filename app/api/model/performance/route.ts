@@ -13,6 +13,6 @@ export async function GET(req: NextRequest) {
       timestamp: new Date().toISOString(),
     });
   } catch (err) {
-    return errorRes(err instanceof Error ? err.message : 'Failed to fetch model performance');
+    return errorRes('Failed to fetch model performance', 500, err);
   }
 }

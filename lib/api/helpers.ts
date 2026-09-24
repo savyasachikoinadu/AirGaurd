@@ -133,6 +133,12 @@ export function jsonRes(data: unknown, status = 200) {
   return Response.json(data, { status });
 }
 
-export function errorRes(message: string, status = 500) {
+// Returns a generic, caller-safe message. Never pass an exception message or any
+// other internal detail as `message` — log it via `cause` instead, which stays
+// server-side.
+export function errorRes(message: string, status = 500, cause?: unknown) {
+  if (cause !== undefined) {
+    console.error(`[api] ${message}:`, cause);
+  }
   return Response.json({ error: message }, { status });
 }
