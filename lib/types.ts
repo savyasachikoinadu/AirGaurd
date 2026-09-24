@@ -387,3 +387,71 @@ export interface AirQualitySummary {
   timestamp: string;
   freshness: string;
 }
+
+// ─── Gemini AI Intelligence Types ───
+
+export interface ForecastDriver {
+  factor: string;
+  direction: 'increase' | 'decrease' | 'neutral';
+  description: string;
+  weight: number;
+}
+
+export interface GeminiIntelligence {
+  summary: string;
+  why: string[];
+  keyRisks: string[];
+  generalRecommendations: string[];
+  studentRecommendations: string[];
+  respiratoryRecommendations: string[];
+  governmentRecommendations: string[];
+  industryRecommendations: string[];
+  source: 'GEMINI';
+  generatedAt: string;
+}
+
+export interface SmartRecommendationGroup {
+  stakeholder: Stakeholder | 'STUDENTS' | 'RESPIRATORY';
+  title: string;
+  icon: string;
+  recommendations: SmartRecommendation[];
+}
+
+export interface SmartRecommendation {
+  title: string;
+  description: string;
+  priority: 'high' | 'medium' | 'low';
+  timing?: string;
+  context?: string;
+}
+
+export type UserMode = 'default' | 'student' | 'respiratory';
+
+export interface StudentGuidance {
+  commuteAdvice: string;
+  outdoorSportsAdvice: string;
+  bestWindowForOutdoor: string;
+  campusExposureNote: string;
+  forecastNote: string;
+  disclaimer: string;
+}
+
+export interface RespiratoryGuidance {
+  currentRisk: string;
+  dominantPollutantNote: string;
+  forecastPeak: string;
+  forecastPeakTime: string;
+  exposureReductionTips: string[];
+  confidenceNote: string;
+  disclaimer: string;
+}
+
+export interface ConfidenceFactors {
+  observationCompleteness: number;
+  stationCount: number;
+  dataFreshness: number;
+  stationAgreement: number;
+  weatherAvailability: number;
+  trendConsistency: number;
+  overall: number;
+}

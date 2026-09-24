@@ -41,7 +41,7 @@ function getGridLayerValue(cell: GridCell, layer: MapLayer): number {
 function getSourceLabel(station: DemoStation, isLive: boolean): string {
   if (isLive) {
     if (station.source === 'OPENAQ') return 'LIVE · OpenAQ';
-    if (station.source === 'OPEN_METEO') return 'LIVE · Open-Meteo Model';
+    if (station.source === 'OPEN_METEO') return 'MODELLED · Open-Meteo';
     if (station.source === 'LIVE_SENSOR') return 'LIVE SENSOR';
     return 'LIVE DATA';
   }
@@ -53,6 +53,7 @@ export function AirQualityMap({ location, stations, gridCells, layer, onStationC
   const containerRef = useRef<HTMLDivElement>(null);
   const markersRef = useRef<L.Marker[]>([]);
   const gridLayerRef = useRef<L.LayerGroup | null>(null);
+  const wheelHandlerRef = useRef<((e: WheelEvent) => void) | null>(null);
 
   // Initialize map
   useEffect(() => {
@@ -62,7 +63,7 @@ export function AirQualityMap({ location, stations, gridCells, layer, onStationC
       center: [location.location.lat, location.location.lng],
       zoom: 12,
       zoomControl: true,
-      scrollWheelZoom: true,
+      scrollWheelZoom: false, // Disabled — controlled wheel handling below
     });
 
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
@@ -73,9 +74,29 @@ export function AirQualityMap({ location, stations, gridCells, layer, onStationC
     gridLayerRef.current = L.layerGroup().addTo(map);
     mapRef.current = map;
 
+    // ─── Ctrl + scroll to zoom ───
+    // Without CTRL: normal page scrolling continues, map does not zoom.
+    // With CTRL: map zooms, default scroll is prevented.
+    const mapContainer = map.getContainer();
+    const wheelHandler = (e: WheelEvent) => {
+      if (e.ctrlKey) {
+        e.preventDefault();
+        const currentZoom = map.getZoom();
+        const delta = e.deltaY > 0 ? -1 : 1;
+        map.setZoom(currentZoom + delta, { animate: true });
+      }
+      // If ctrlKey is false, do nothing — let the page scroll normally
+    };
+    wheelHandlerRef.current = wheelHandler;
+
+    // Use passive: false so we can call preventDefault when ctrlKey is true
+    mapContainer.addEventListener('wheel', wheelHandler, { passive: false });
+
     return () => {
+      mapContainer.removeEventListener('wheel', wheelHandler);
       map.remove();
       mapRef.current = null;
+      wheelHandlerRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -86,7 +107,7 @@ export function AirQualityMap({ location, stations, gridCells, layer, onStationC
     mapRef.current.setView([location.location.lat, location.location.lng], 12);
   }, [location]);
 
-  // Update grid cells
+  // Update grid cells — increased opacity for better visibility
   useEffect(() => {
     if (!mapRef.current || !gridLayerRef.current) return;
     gridLayerRef.current.clearLayers();
@@ -98,17 +119,21 @@ export function AirQualityMap({ location, stations, gridCells, layer, onStationC
       const color = layer === 'no2' ? '#3b82f6' : getAqiColor(cell.aqi);
       const radius = 600;
 
+      // Increased fill opacity: was 0.15/0.25/0.35, now 0.35/0.50/0.60
+      const fillOpacity = cell.dataType === 'AI_ESTIMATE' ? 0.35 : cell.dataType === 'MODEL_FORECAST' ? 0.50 : 0.60;
+
       L.circle([cell.location.lat, cell.location.lng], {
         radius,
         color: color,
         fillColor: color,
-        fillOpacity: cell.dataType === 'AI_ESTIMATE' ? 0.15 : cell.dataType === 'MODEL_FORECAST' ? 0.25 : 0.35,
-        weight: 0,
+        fillOpacity,
+        weight: 1,
+        opacity: 0.6,
       }).addTo(gridLayerRef.current!);
     });
   }, [gridCells, layer]);
 
-  // Update station markers
+  // Update station markers — increased highlight visibility
   useEffect(() => {
     if (!mapRef.current) return;
 
@@ -133,6 +158,15 @@ export function AirQualityMap({ location, stations, gridCells, layer, onStationC
 
       const marker = L.marker([station.location.lat, station.location.lng], { icon })
         .addTo(mapRef.current!);
+
+      // Add a subtle highlight circle behind each station marker for visibility
+      L.circle([station.location.lat, station.location.lng], {
+        radius: 300,
+        color: aqiColor,
+        fillColor: aqiColor,
+        fillOpacity: 0.25,
+        weight: 0,
+      }).addTo(mapRef.current!);
 
       const popupContent = `
         <div style="min-width:200px;">
@@ -160,5 +194,13 @@ export function AirQualityMap({ location, stations, gridCells, layer, onStationC
     });
   }, [stations, layer, onStationClick, liveMode]);
 
-  return <div ref={containerRef} className={className || 'h-full w-full'} />;
+  return (
+    <div className="relative h-full w-full">
+      <div ref={containerRef} className={className || 'h-full w-full'} />
+      {/* Ctrl + scroll hint */}
+      <div className="absolute bottom-2 right-2 z-[1000] rounded-md bg-white/90 px-2 py-1 text-[10px] text-gray-600 shadow-sm pointer-events-none">
+        Use Ctrl + scroll to zoom
+      </div>
+    </div>
+  );
 }

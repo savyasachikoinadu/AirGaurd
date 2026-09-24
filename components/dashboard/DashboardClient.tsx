@@ -26,6 +26,11 @@ import type {
   WeatherReadings,
   TrendData,
   DataSource,
+  UserMode,
+  StudentGuidance,
+  RespiratoryGuidance,
+  SmartRecommendationGroup,
+  ConfidenceFactors,
 } from '@/lib/types';
 import { ASIA_LOCATIONS, getDefaultLocation, getStationsForLocation } from '@/lib/demo/locations';
 import { generateDemoStations } from '@/lib/demo/generator';
@@ -54,9 +59,13 @@ import { PredictionPerformance as PredictionPerformanceComponent } from '@/compo
 import { DataQualityPanel } from '@/components/dashboard/DataQualityPanel';
 import { AboutPanel } from '@/components/dashboard/AboutPanel';
 import { ModeBadge } from '@/components/shared/ModeBadge';
-import { Shield, Search, Activity, MapPin, Clock, Wifi, WifiOff, RefreshCw } from 'lucide-react';
+import { generateSmartRecommendations, generateStudentGuidance, generateRespiratoryGuidance } from '@/lib/forecast/smart-recs';
+import { calculateConfidenceFactors } from '@/lib/forecast/confidence';
+import { StudentMode } from '@/components/dashboard/StudentMode';
+import { RespiratoryMode } from '@/components/dashboard/RespiratoryMode';
+import { Shield, Search, Activity, MapPin, Clock, Wifi, WifiOff, RefreshCw, GraduationCap, HeartPulse, User } from 'lucide-react';
 
-type SectionId = 'overview' | 'map' | 'forecast' | 'journey' | 'explanation' | 'threats' | 'simulation' | 'recommendations' | 'alerts' | 'performance' | 'data-quality' | 'about';
+type SectionId = 'overview' | 'map' | 'forecast' | 'journey' | 'explanation' | 'threats' | 'simulation' | 'recommendations' | 'student' | 'respiratory' | 'alerts' | 'performance' | 'data-quality' | 'about';
 
 const SECTIONS: { id: SectionId; label: string; icon: typeof Shield }[] = [
   { id: 'overview', label: 'Overview', icon: Activity },
@@ -67,6 +76,8 @@ const SECTIONS: { id: SectionId; label: string; icon: typeof Shield }[] = [
   { id: 'threats', label: 'Future Threats', icon: Activity },
   { id: 'simulation', label: 'What-If', icon: Activity },
   { id: 'recommendations', label: 'Actions', icon: Activity },
+  { id: 'student', label: 'Student', icon: GraduationCap },
+  { id: 'respiratory', label: 'Respiratory', icon: HeartPulse },
   { id: 'alerts', label: 'Alerts', icon: Activity },
   { id: 'performance', label: 'Prediction Eval', icon: Activity },
   { id: 'data-quality', label: 'Data Quality', icon: Activity },
@@ -219,6 +230,11 @@ export function DashboardClient() {
   const [liveData, setLiveData] = useState<LiveDataResponse | null>(null);
   const [liveError, setLiveError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<string>(new Date().toISOString());
+  const [userMode, setUserMode] = useState<UserMode>('default');
+  const [studentGuidance, setStudentGuidance] = useState<StudentGuidance | null>(null);
+  const [respiratoryGuidance, setRespiratoryGuidance] = useState<RespiratoryGuidance | null>(null);
+  const [smartGroups, setSmartGroups] = useState<SmartRecommendationGroup[]>([]);
+  const [confidenceFactors, setConfidenceFactors] = useState<ConfidenceFactors | null>(null);
 
   // Compute all data for the selected location
   const computeData = useCallback(async (location: LocationDef, currentMode: DataMode) => {
@@ -282,6 +298,17 @@ export function DashboardClient() {
         const recs = generateRecommendations(fc, location);
         setRecommendations(recs);
 
+        // Generate smart recommendations and mode-specific guidance
+        const summaryWeather: WeatherReadings = data.weather
+          ? { temperatureC: data.weather.temperatureC, humidity: data.weather.humidity, windSpeedKph: data.weather.windSpeedKph, windDirectionDeg: data.weather.windDirectionDeg, pressureMb: data.weather.pressureMb, precipitationMm: data.weather.precipitationMm, cloud: data.weather.cloud, visibilityKm: data.weather.visibilityKm }
+          : { temperatureC: 25, humidity: 50, windSpeedKph: 5, windDirectionDeg: 180, pressureMb: 1013, precipitationMm: 0, cloud: 30, visibilityKm: 10 };
+        const summaryPollutants: PollutantReadings = fc[0]?.pollutants || { pm25: 0, pm10: 0, no2: 0, o3: 0, so2: 0, co: 0 };
+        const sGroups = generateSmartRecommendations(fc, location, summaryWeather, summaryPollutants, userMode);
+        setSmartGroups(sGroups);
+        setStudentGuidance(generateStudentGuidance(fc, summaryWeather, location));
+        setRespiratoryGuidance(generateRespiratoryGuidance(fc, summaryWeather, summaryPollutants, fc[0]?.confidenceScore || 0.4));
+        setConfidenceFactors(calculateConfidenceFactors(demoStations, fc, data.stations));
+
         const perf = generatePredictionFeedback(fc, location);
         setPerformance(perf);
 
@@ -322,6 +349,15 @@ export function DashboardClient() {
       const recs = generateRecommendations(fc, location);
       setRecommendations(recs);
 
+      // Generate smart recommendations and mode-specific guidance for DEMO mode
+      const summaryWeather: WeatherReadings = demoStations[0]?.weather || { temperatureC: 25, humidity: 50, windSpeedKph: 5, windDirectionDeg: 180, pressureMb: 1013, precipitationMm: 0, cloud: 30, visibilityKm: 10 };
+      const summaryPollutants: PollutantReadings = fc[0]?.pollutants || { pm25: 0, pm10: 0, no2: 0, o3: 0, so2: 0, co: 0 };
+      const sGroups = generateSmartRecommendations(fc, location, summaryWeather, summaryPollutants, userMode);
+      setSmartGroups(sGroups);
+      setStudentGuidance(generateStudentGuidance(fc, summaryWeather, location));
+      setRespiratoryGuidance(generateRespiratoryGuidance(fc, summaryWeather, summaryPollutants, fc[0]?.confidenceScore || 0.4));
+      setConfidenceFactors(calculateConfidenceFactors(demoStations, fc));
+
       const perf = generatePredictionFeedback(fc, location);
       setPerformance(perf);
 
@@ -338,6 +374,17 @@ export function DashboardClient() {
   useEffect(() => {
     computeData(selectedLocation, mode);
   }, [selectedLocation, mode, computeData]);
+
+  // Regenerate smart recommendations when userMode changes (without re-fetching live data)
+  useEffect(() => {
+    if (forecast.length === 0 || stations.length === 0) return;
+    const summaryWeather: WeatherReadings = currentSummary?.weather || stations[0]?.weather;
+    if (!summaryWeather) return;
+    const summaryPollutants: PollutantReadings = currentSummary?.pollutants || forecast[0]?.pollutants;
+    if (!summaryPollutants) return;
+    setSmartGroups(generateSmartRecommendations(forecast, selectedLocation, summaryWeather, summaryPollutants, userMode));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userMode]);
 
   useEffect(() => {
     const timer = setInterval(() => setCurrentTime(new Date()), 60000);
@@ -509,6 +556,40 @@ export function DashboardClient() {
               {isLive ? 'LIVE' : 'DEMO'}
             </button>
 
+            {/* User mode selector: Default / Student / Respiratory */}
+            <div className="flex items-center gap-0.5 rounded-md border bg-card p-0.5">
+              <button
+                onClick={() => setUserMode('default')}
+                className={`flex items-center gap-1 rounded px-2 py-1 text-[10px] font-medium transition-colors ${
+                  userMode === 'default' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-muted'
+                }`}
+                title="Default view"
+              >
+                <User className="w-3 h-3" />
+                <span className="hidden sm:inline">Default</span>
+              </button>
+              <button
+                onClick={() => setUserMode('student')}
+                className={`flex items-center gap-1 rounded px-2 py-1 text-[10px] font-medium transition-colors ${
+                  userMode === 'student' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-muted'
+                }`}
+                title="Student Mode"
+              >
+                <GraduationCap className="w-3 h-3" />
+                <span className="hidden sm:inline">Student</span>
+              </button>
+              <button
+                onClick={() => setUserMode('respiratory')}
+                className={`flex items-center gap-1 rounded px-2 py-1 text-[10px] font-medium transition-colors ${
+                  userMode === 'respiratory' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-muted'
+                }`}
+                title="Respiratory Sensitivity Mode"
+              >
+                <HeartPulse className="w-3 h-3" />
+                <span className="hidden sm:inline">Respiratory</span>
+              </button>
+            </div>
+
             <div className="hidden md:flex items-center gap-1.5 text-xs text-muted-foreground">
               <Clock className="w-3.5 h-3.5" />
               {currentTime.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}
@@ -664,7 +745,17 @@ export function DashboardClient() {
 
             {/* Explanation */}
             {(activeSection === 'overview' || activeSection === 'explanation') && (
-              <ExplainableAI explanation={explanation} />
+              <ExplainableAI
+                explanation={explanation}
+                forecast={forecast}
+                weather={currentSummary?.weather}
+                pollutants={currentSummary?.pollutants}
+                city={selectedLocation.city}
+                mode={isLive ? 'LIVE' : 'DEMO'}
+                stationCount={liveData?.stations.length || stations.length}
+                stationAgreement={confidenceFactors?.stationAgreement || 0.5}
+                dataFreshness={liveData?.stations[0]?.observedAt || lastUpdated}
+              />
             )}
 
             {/* Threats */}
@@ -683,7 +774,29 @@ export function DashboardClient() {
 
             {/* Recommendations */}
             {(activeSection === 'overview' || activeSection === 'recommendations') && (
-              <Recommendations recommendations={recommendations} />
+              <Recommendations
+                recommendations={recommendations}
+                forecast={forecast}
+                weather={currentSummary?.weather}
+                pollutants={currentSummary?.pollutants}
+                city={selectedLocation.city}
+                mode={isLive ? 'LIVE' : 'DEMO'}
+                userMode={userMode}
+                stationCount={liveData?.stations.length || stations.length}
+                stationAgreement={confidenceFactors?.stationAgreement || 0.5}
+                dataFreshness={liveData?.stations[0]?.observedAt || lastUpdated}
+                smartGroups={smartGroups}
+              />
+            )}
+
+            {/* Student Mode */}
+            {(activeSection === 'overview' || activeSection === 'student') && (
+              <StudentMode guidance={studentGuidance} />
+            )}
+
+            {/* Respiratory Sensitivity Mode */}
+            {(activeSection === 'overview' || activeSection === 'respiratory') && (
+              <RespiratoryMode guidance={respiratoryGuidance} />
             )}
 
             {/* Alerts */}
@@ -713,6 +826,8 @@ export function DashboardClient() {
               AI AirGuard — {isLive ? 'LIVE MODE' : 'Phase 1 Demo'} |
               {isLive ? ' Data: OpenAQ + Open-Meteo' : ' All data is ASIA DEMO DATA'} |
               CPCB AQI Standard |
+              Forecast: AirGuard Engine |
+              AI Interpretation: Gemini |
               {isLive ? ' Real monitoring data' : ' No external APIs connected | No fabricated accuracy claims'}
             </footer>
           </>
