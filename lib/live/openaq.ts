@@ -59,6 +59,24 @@ export function isOpenAQConfigured(): boolean {
   return getApiKey() !== null;
 }
 
+// Read the OpenAQ error response body and return a safe message.
+// Never includes the API key. Surfaces provider detail for debugging.
+async function safeReadErrorBody(response: Response): Promise<string> {
+  const status = response.status;
+  const statusText = response.statusText || '';
+  try {
+    const body = await response.json();
+    const detail = (body && typeof body === 'object' && 'detail' in body && typeof body.detail === 'string')
+      ? body.detail
+      : (body && typeof body === 'object' && 'message' in body && typeof body.message === 'string')
+        ? body.message
+        : JSON.stringify(body).slice(0, 200);
+    return `OpenAQ ${status}: ${detail}`;
+  } catch {
+    return `OpenAQ ${status}${statusText ? ` ${statusText}` : ''}`;
+  }
+}
+
 // Map OpenAQ parameter names to our internal pollutant keys
 // OpenAQ uses: pm25, pm10, no2, so2, co, o3, nh3 (lowercase)
 function mapParameterName(name: string): string | null {
@@ -184,9 +202,9 @@ export async function fetchOpenAQStations(
 
   const params = new URLSearchParams({
     coordinates: `${center.lat},${center.lng}`,
-    radius: String(radiusKm * 1000), // OpenAQ expects meters
+    radius: String(Math.min(radiusKm * 1000, 25000)), // OpenAQ expects meters, max 25000
     limit: '100',
-    order_by: 'distance',
+    order_by: 'id',
   });
 
   try {
@@ -204,7 +222,8 @@ export async function fetchOpenAQStations(
       return { stations: [], status: 'error', error: 'OpenAQ rate limit exceeded' };
     }
     if (!response.ok) {
-      return { stations: [], status: 'error', error: `OpenAQ returned ${response.status}` };
+      const detail = await safeReadErrorBody(response);
+      return { stations: [], status: 'error', error: detail };
     }
 
     const data = (await response.json()) as OpenAQLocationsResponse;
@@ -276,7 +295,8 @@ export async function fetchOpenAQLatest(
       return { stations: [], status: 'error', error: 'OpenAQ rate limit exceeded' };
     }
     if (!response.ok) {
-      return { stations: [], status: 'error', error: `OpenAQ returned ${response.status}` };
+      const detail = await safeReadErrorBody(response);
+      return { stations: [], status: 'error', error: detail };
     }
 
     const data = (await response.json()) as OpenAQLatestResponse;
