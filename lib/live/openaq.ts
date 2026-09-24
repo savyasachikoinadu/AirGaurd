@@ -7,47 +7,57 @@ import { calculateCpcbAqi, getAqiCategory } from '../aqi/cpcb';
 
 const OPENAQ_BASE = 'https://api.openaq.org/v3';
 
-interface OpenAQParameter {
-  parameter: { name: string };
-  value: number;
-  datetime: string;
-  unit: string;
-}
+// ─── OpenAQ v3 response interfaces (matching actual API schema) ───
 
-interface OpenAQLatestMeasurement {
-  parameter: { name: string };
-  value: number;
-  datetime: string;
-  unit: string;
-}
-
-interface OpenAQLocation {
+interface OpenAQV3Sensor {
   id: number;
   name: string;
-  latitude: number;
-  longitude: number;
-  country: { name: string; code: string };
-  city?: string;
+  parameter: {
+    id: number;
+    name: string;
+    units: string;
+    displayName: string;
+  };
+}
+
+interface OpenAQV3Location {
+  id: number;
+  name: string;
+  locality?: string;
+  timezone?: string;
+  country: { id: number; code: string; name: string };
+  provider?: { id: number; name: string };
+  owner?: { id: number; name: string };
   isMobile: boolean;
-  parameters: { name: string }[];
-  latest: OpenAQLatestMeasurement[];
+  isMonitor?: boolean;
+  sensors: OpenAQV3Sensor[];
+  coordinates: { latitude: number; longitude: number };
+  bounds?: number[];
+  distance?: number | null;
+  datetimeFirst?: { utc: string; local: string };
+  datetimeLast?: { utc: string; local: string };
 }
 
-interface OpenAQLocationsResponse {
-  results: OpenAQLocation[];
-  meta: { found: number; returned: number };
+interface OpenAQV3LocationsResponse {
+  meta: { name: string; website: string; page: number; limit: number; found: number };
+  results: OpenAQV3Location[];
 }
 
-interface OpenAQLatestResponse {
-  results: {
-    locationId: number;
-    location: string;
-    city?: string;
-    country: { name: string; code: string };
-    coordinates?: { latitude: number; longitude: number };
-    measurements: OpenAQLatestMeasurement[];
-  }[];
+// Latest measurement for a single location: GET /v3/locations/{id}/latest
+interface OpenAQV3LatestResult {
+  datetime: { utc: string; local: string };
+  value: number;
+  coordinates: { latitude: number; longitude: number };
+  sensorsId: number;
+  locationsId: number;
 }
+
+interface OpenAQV3LatestResponse {
+  meta: { name: string; website: string; page: number; limit: number; found: number };
+  results: OpenAQV3LatestResult[];
+}
+
+// ─── API key handling ───
 
 function getApiKey(): string | null {
   const key = process.env.OPENAQ_API_KEY;
@@ -77,8 +87,8 @@ async function safeReadErrorBody(response: Response): Promise<string> {
   }
 }
 
-// Map OpenAQ parameter names to our internal pollutant keys
-// OpenAQ uses: pm25, pm10, no2, so2, co, o3, nh3 (lowercase)
+// ─── Pollutant mapping ───
+
 function mapParameterName(name: string): string | null {
   const lower = name.toLowerCase().replace('.', '').replace(/[^a-z0-9]/g, '');
   switch (lower) {
@@ -94,101 +104,32 @@ function mapParameterName(name: string): string | null {
 }
 
 // OpenAQ returns CO in various units; CPCB expects mg/m³
-// OpenAQ typically returns CO in µg/m³ — convert to mg/m³
 function normalizeCOValue(value: number, unit: string): number {
   const u = unit.toLowerCase();
   if (u === 'mg/m³' || u === 'mg/m3') return value;
   if (u === 'µg/m³' || u === 'ug/m³' || u === 'ug/m3' || u === 'µg/m3') return value / 1000;
-  return value / 1000; // default assume µg/m³
+  return value / 1000;
 }
 
-function buildReadingFromLocation(loc: OpenAQLocation, cityOverride?: string): LiveStationReading | null {
-  const readings: Partial<LiveStationReading> = {
-    pm25: undefined,
-    pm10: undefined,
-    no2: undefined,
-    so2: undefined,
-    co: undefined,
-    o3: undefined,
-    nh3: undefined,
-  };
-
-  let observedAt = new Date().toISOString();
-
-  for (const m of loc.latest || []) {
-    const key = mapParameterName(m.parameter.name);
-    if (!key) continue;
-    if (key === 'co') {
-      readings.co = normalizeCOValue(m.value, m.unit);
-    } else {
-      (readings as Record<string, number | undefined>)[key] = m.value;
-    }
-    // Use the most recent observation time
-    const mTime = new Date(m.datetime).getTime();
-    if (mTime > 0 && (!observedAt || new Date(observedAt).getTime() < mTime)) {
-      observedAt = m.datetime;
-    } else if (!observedAt) {
-      observedAt = m.datetime;
-    }
-  }
-
-  // Need at least one pollutant to be useful
-  const hasAnyPollutant = readings.pm25 !== undefined || readings.pm10 !== undefined ||
-    readings.no2 !== undefined || readings.so2 !== undefined ||
-    readings.co !== undefined || readings.o3 !== undefined;
-
-  if (!hasAnyPollutant) return null;
-
-  // Calculate CPCB AQI from available pollutants
-  const pollutantInput = {
-    pm25: readings.pm25 ?? 0,
-    pm10: readings.pm10 ?? 0,
-    no2: readings.no2 ?? 0,
-    o3: readings.o3 ?? 0,
-    so2: readings.so2 ?? 0,
-    co: readings.co ?? 0,
-  };
-
-  // Only calculate AQI if at least PM2.5 or PM10 is present
-  let aqi: number | undefined;
-  let aqiCategory: LiveStationReading['aqiCategory'];
-  if (readings.pm25 !== undefined || readings.pm10 !== undefined) {
-    const result = calculateCpcbAqi(pollutantInput);
-    aqi = result.aqi;
-    aqiCategory = getAqiCategory(aqi);
-  }
-
-  return {
-    stationId: `openaq-${loc.id}`,
-    stationName: loc.name,
-    latitude: loc.latitude,
-    longitude: loc.longitude,
-    city: cityOverride || loc.city || loc.country?.name || 'Unknown',
-    country: loc.country?.name || 'Unknown',
-    provider: 'OpenAQ',
-    source: 'OPENAQ',
-    observedAt,
-    pm25: readings.pm25,
-    pm10: readings.pm10,
-    no2: readings.no2,
-    so2: readings.so2,
-    co: readings.co,
-    o3: readings.o3,
-    nh3: readings.nh3,
-    aqi,
-    aqiCategory,
-  };
-}
+// ─── Result type ───
 
 export interface OpenAQStationResult {
   stations: LiveStationReading[];
   status: 'ok' | 'error' | 'no_key' | 'no_stations' | 'unreachable';
   error?: string;
+  locationsFound?: number;
+  locationsRetained?: number;
+  stationsWithMeasurements?: number;
 }
 
+// ─── Station discovery + latest measurements ───
+
 /**
- * Discover monitoring stations around a coordinate using OpenAQ V3 locations endpoint.
- * Uses a radius-based search around the city center.
+ * Discover monitoring stations around a coordinate using OpenAQ V3 locations endpoint,
+ * then fetch latest measurements for each location via /v3/locations/{id}/latest.
+ *
+ * A station is kept on the map if it has at least one supported pollutant sensor,
+ * even if the latest measurement fetch fails — it will be shown without current readings.
  */
 export async function fetchOpenAQStations(
   center: GeoPoint,
@@ -200,58 +141,49 @@ export async function fetchOpenAQStations(
     return { stations: [], status: 'no_key', error: 'OPENAQ_API_KEY not configured' };
   }
 
+  const coords = `${center.lat},${center.lng}`;
+  const radiusM = String(Math.min(Math.round(radiusKm * 1000), 25000));
   const params = new URLSearchParams({
-    coordinates: `${center.lat},${center.lng}`,
-    radius: String(Math.min(radiusKm * 1000, 25000)), // OpenAQ expects meters, max 25000
+    coordinates: coords,
+    radius: radiusM,
     limit: '100',
     order_by: 'id',
   });
 
+  const locationsUrl = `${OPENAQ_BASE}/locations?${params}`;
+  console.log(`[OpenAQ] GET ${locationsUrl}`);
+
+  let locations: OpenAQV3Location[];
+  let locationsFound = 0;
   try {
-    const response = await fetch(`${OPENAQ_BASE}/locations?${params}`, {
+    const response = await fetch(locationsUrl, {
       headers: {
         'X-API-Key': apiKey,
         'Accept': 'application/json',
       },
-      // Cache for 2 minutes at the fetch level
       next: { revalidate: 120 },
-      signal: AbortSignal.timeout(10000),
+      signal: AbortSignal.timeout(15000),
     });
+
+    console.log(`[OpenAQ] locations HTTP status: ${response.status}`);
 
     if (response.status === 429) {
       return { stations: [], status: 'error', error: 'OpenAQ rate limit exceeded' };
     }
     if (!response.ok) {
       const detail = await safeReadErrorBody(response);
+      console.error(`[OpenAQ] locations error: ${detail}`);
       return { stations: [], status: 'error', error: detail };
     }
 
-    const data = (await response.json()) as OpenAQLocationsResponse;
-    if (!data.results || data.results.length === 0) {
-      return { stations: [], status: 'no_stations', error: 'No stations found within radius' };
+    const data = (await response.json()) as OpenAQV3LocationsResponse;
+    locations = data.results || [];
+    locationsFound = data.meta?.found ?? locations.length;
+
+    console.log(`[OpenAQ] locations returned: ${locations.length} (found: ${locationsFound})`);
+    for (const loc of locations) {
+      console.log(`[OpenAQ] location id=${loc.id} name="${loc.name}" coords=(${loc.coordinates?.latitude}, ${loc.coordinates?.longitude}) sensors=${loc.sensors?.length ?? 0}`);
     }
-
-    // Filter to stations that have at least some air quality parameters
-    const aqParams = ['pm25', 'pm10', 'no2', 'so2', 'co', 'o3'];
-    const filtered = data.results.filter((loc) =>
-      loc.parameters && loc.parameters.some((p) => aqParams.includes(p.name.toLowerCase()))
-    );
-
-    if (filtered.length === 0) {
-      return { stations: [], status: 'no_stations', error: 'No AQ stations with relevant pollutants found' };
-    }
-
-    const stations: LiveStationReading[] = [];
-    for (const loc of filtered) {
-      const reading = buildReadingFromLocation(loc, cityOverride);
-      if (reading) stations.push(reading);
-    }
-
-    if (stations.length === 0) {
-      return { stations: [], status: 'no_stations', error: 'Stations found but none had current measurements' };
-    }
-
-    return { stations, status: 'ok' };
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'Unknown error';
     if (msg.includes('timeout') || msg.includes('abort')) {
@@ -259,122 +191,185 @@ export async function fetchOpenAQStations(
     }
     return { stations: [], status: 'unreachable', error: msg };
   }
-}
 
-/**
- * Fetch latest measurements for a specific location ID from OpenAQ.
- * This is an alternative to the locations endpoint when we need fresh measurements.
- */
-export async function fetchOpenAQLatest(
-  center: GeoPoint,
-  radiusKm: number = 25,
-  cityOverride?: string,
-): Promise<OpenAQStationResult> {
-  const apiKey = getApiKey();
-  if (!apiKey) {
-    return { stations: [], status: 'no_key', error: 'OPENAQ_API_KEY not configured' };
+  if (locations.length === 0) {
+    return { stations: [], status: 'no_stations', error: 'No stations found within radius', locationsFound: 0, locationsRetained: 0 };
   }
 
-  const params = new URLSearchParams({
-    coordinates: `${center.lat},${center.lng}`,
-    radius: String(radiusKm * 1000),
-    limit: '100',
+  // Keep locations that have at least one supported AQ pollutant sensor.
+  // We do NOT require every pollutant — even a single one (e.g. only PM2.5) is enough.
+  const supportedPollutants = new Set(['pm25', 'pm10', 'no2', 'so2', 'co', 'o3']);
+
+  const retained = locations.filter((loc) => {
+    if (!loc.sensors || loc.sensors.length === 0) return false;
+    return loc.sensors.some((s) => supportedPollutants.has(s.parameter?.name?.toLowerCase()));
   });
 
-  try {
-    const response = await fetch(`${OPENAQ_BASE}/latest?${params}`, {
-      headers: {
-        'X-API-Key': apiKey,
-        'Accept': 'application/json',
-      },
-      next: { revalidate: 120 },
-      signal: AbortSignal.timeout(10000),
-    });
+  console.log(`[OpenAQ] locations after pollutant filter: ${retained.length} (was ${locations.length})`);
 
-    if (response.status === 429) {
-      return { stations: [], status: 'error', error: 'OpenAQ rate limit exceeded' };
-    }
-    if (!response.ok) {
-      const detail = await safeReadErrorBody(response);
-      return { stations: [], status: 'error', error: detail };
-    }
-
-    const data = (await response.json()) as OpenAQLatestResponse;
-    if (!data.results || data.results.length === 0) {
-      return { stations: [], status: 'no_stations', error: 'No latest measurements found' };
-    }
-
-    const stations: LiveStationReading[] = [];
-    for (const result of data.results) {
-      const readings: Partial<LiveStationReading> = {};
-      let observedAt = new Date().toISOString();
-
-      for (const m of result.measurements || []) {
-        const key = mapParameterName(m.parameter.name);
-        if (!key) continue;
-        if (key === 'co') {
-          readings.co = normalizeCOValue(m.value, m.unit);
-        } else {
-          (readings as Record<string, number | undefined>)[key] = m.value;
-        }
-        if (m.datetime) observedAt = m.datetime;
-      }
-
-      const hasAnyPollutant = readings.pm25 !== undefined || readings.pm10 !== undefined ||
-        readings.no2 !== undefined || readings.so2 !== undefined ||
-        readings.co !== undefined || readings.o3 !== undefined;
-
-      if (!hasAnyPollutant) continue;
-
-      const lat = result.coordinates?.latitude ?? center.lat;
-      const lng = result.coordinates?.longitude ?? center.lng;
-
-      let aqi: number | undefined;
-      let aqiCategory: LiveStationReading['aqiCategory'];
-      if (readings.pm25 !== undefined || readings.pm10 !== undefined) {
-        const result2 = calculateCpcbAqi({
-          pm25: readings.pm25 ?? 0,
-          pm10: readings.pm10 ?? 0,
-          no2: readings.no2 ?? 0,
-          o3: readings.o3 ?? 0,
-          so2: readings.so2 ?? 0,
-          co: readings.co ?? 0,
-        });
-        aqi = result2.aqi;
-        aqiCategory = getAqiCategory(aqi);
-      }
-
-      stations.push({
-        stationId: `openaq-latest-${result.locationId}`,
-        stationName: result.location || 'Unknown Station',
-        latitude: lat,
-        longitude: lng,
-        city: cityOverride || result.city || 'Unknown',
-        country: result.country?.name || 'Unknown',
-        provider: 'OpenAQ',
-        source: 'OPENAQ',
-        observedAt,
-        pm25: readings.pm25,
-        pm10: readings.pm10,
-        no2: readings.no2,
-        so2: readings.so2,
-        co: readings.co,
-        o3: readings.o3,
-        aqi,
-        aqiCategory,
-      });
-    }
-
-    if (stations.length === 0) {
-      return { stations: [], status: 'no_stations', error: 'No stations with valid measurements' };
-    }
-
-    return { stations, status: 'ok' };
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : 'Unknown error';
-    if (msg.includes('timeout') || msg.includes('abort')) {
-      return { stations: [], status: 'unreachable', error: 'OpenAQ request timed out' };
-    }
-    return { stations: [], status: 'unreachable', error: msg };
+  if (retained.length === 0) {
+    return {
+      stations: [],
+      status: 'no_stations',
+      error: 'No AQ stations with relevant pollutants found',
+      locationsFound,
+      locationsRetained: 0,
+      stationsWithMeasurements: 0,
+    };
   }
+
+  // Build a sensorId → pollutant-key map for each location
+  // Then fetch /v3/locations/{id}/latest for each station in parallel
+  const stationPromises = retained.map(async (loc) => {
+    const sensorMap = new Map<number, { key: string; units: string }>();
+    for (const s of loc.sensors) {
+      const key = mapParameterName(s.parameter?.name || '');
+      if (key) {
+        sensorMap.set(s.id, { key, units: s.parameter?.units || '' });
+      }
+    }
+
+    // Fetch latest measurements for this location
+    let latestResults: OpenAQV3LatestResult[] = [];
+    let latestError: string | null = null;
+    try {
+      const latestUrl = `${OPENAQ_BASE}/locations/${loc.id}/latest`;
+      const latestResp = await fetch(latestUrl, {
+        headers: {
+          'X-API-Key': apiKey,
+          'Accept': 'application/json',
+        },
+        next: { revalidate: 120 },
+        signal: AbortSignal.timeout(10000),
+      });
+
+      if (latestResp.ok) {
+        const latestData = (await latestResp.json()) as OpenAQV3LatestResponse;
+        latestResults = latestData.results || [];
+      } else if (latestResp.status === 404) {
+        // No latest measurements for this location — keep station with no readings
+        latestError = 'no measurements';
+      } else {
+        latestError = `HTTP ${latestResp.status}`;
+      }
+    } catch (err) {
+      latestError = err instanceof Error ? err.message : 'fetch failed';
+    }
+
+    // Build readings from latest results, matching sensorId to pollutant key
+    const readings: Partial<LiveStationReading> = {
+      pm25: undefined, pm10: undefined, no2: undefined,
+      so2: undefined, co: undefined, o3: undefined, nh3: undefined,
+    };
+    let observedAt: string | undefined;
+
+    for (const m of latestResults) {
+      const sensorInfo = sensorMap.get(m.sensorsId);
+      if (!sensorInfo) continue;
+
+      if (sensorInfo.key === 'co') {
+        readings.co = normalizeCOValue(m.value, sensorInfo.units);
+      } else {
+        (readings as Record<string, number | undefined>)[sensorInfo.key] = m.value;
+      }
+
+      // Use the UTC datetime from the provider
+      const utcTime = m.datetime?.utc;
+      if (utcTime) {
+        const t = new Date(utcTime).getTime();
+        if (!isNaN(t) && (!observedAt || new Date(observedAt).getTime() < t)) {
+          observedAt = utcTime;
+        }
+      }
+    }
+
+    const hasAnyPollutant = readings.pm25 !== undefined || readings.pm10 !== undefined ||
+      readings.no2 !== undefined || readings.so2 !== undefined ||
+      readings.co !== undefined || readings.o3 !== undefined;
+
+    // Calculate CPCB AQI only from pollutants actually available
+    let aqi: number | undefined;
+    let aqiCategory: LiveStationReading['aqiCategory'];
+
+    if (hasAnyPollutant && (readings.pm25 !== undefined || readings.pm10 !== undefined)) {
+      const result = calculateCpcbAqi({
+        pm25: readings.pm25 ?? 0,
+        pm10: readings.pm10 ?? 0,
+        no2: readings.no2 ?? 0,
+        o3: readings.o3 ?? 0,
+        so2: readings.so2 ?? 0,
+        co: readings.co ?? 0,
+      });
+      aqi = result.aqi;
+      aqiCategory = getAqiCategory(aqi);
+    }
+
+    // Keep the station even if no latest measurements — show it without readings
+    const station: LiveStationReading = {
+      stationId: `openaq-${loc.id}`,
+      stationName: loc.name,
+      latitude: loc.coordinates?.latitude ?? center.lat,
+      longitude: loc.coordinates?.longitude ?? center.lng,
+      city: cityOverride || loc.locality || loc.country?.name || 'Unknown',
+      country: loc.country?.name || 'Unknown',
+      provider: 'OpenAQ',
+      source: 'OPENAQ',
+      observedAt: observedAt || (loc.datetimeLast?.utc || new Date().toISOString()),
+      pm25: readings.pm25,
+      pm10: readings.pm10,
+      no2: readings.no2,
+      so2: readings.so2,
+      co: readings.co,
+      o3: readings.o3,
+      nh3: readings.nh3,
+      aqi,
+      aqiCategory,
+    };
+
+    if (latestError && !hasAnyPollutant) {
+      console.log(`[OpenAQ] location id=${loc.id} name="${loc.name}" — no current measurements (${latestError})`);
+    } else if (hasAnyPollutant) {
+      const pollutantList: string[] = [];
+      if (readings.pm25 !== undefined) pollutantList.push('pm25');
+      if (readings.pm10 !== undefined) pollutantList.push('pm10');
+      if (readings.no2 !== undefined) pollutantList.push('no2');
+      if (readings.o3 !== undefined) pollutantList.push('o3');
+      if (readings.so2 !== undefined) pollutantList.push('so2');
+      if (readings.co !== undefined) pollutantList.push('co');
+      console.log(`[OpenAQ] location id=${loc.id} name="${loc.name}" — measurements: ${pollutantList.join(', ')} observed=${observedAt}`);
+    }
+
+    return station;
+  });
+
+  const allStations = await Promise.all(stationPromises);
+
+  const stationsWithMeas = allStations.filter((s) => s.pm25 !== undefined || s.pm10 !== undefined ||
+    s.no2 !== undefined || s.so2 !== undefined || s.co !== undefined || s.o3 !== undefined);
+
+  console.log(`[OpenAQ] final: ${allStations.length} stations on map, ${stationsWithMeas.length} with current measurements`);
+
+  if (allStations.length === 0) {
+    return {
+      stations: [],
+      status: 'no_stations',
+      error: 'Stations found but none could be processed',
+      locationsFound,
+      locationsRetained: retained.length,
+      stationsWithMeasurements: 0,
+    };
+  }
+
+  // Status is 'ok' if we have any stations with measurements, otherwise 'no_stations'
+  // but we still return the stations without measurements for map display
+  const status = stationsWithMeas.length > 0 ? 'ok' : 'no_stations';
+
+  return {
+    stations: allStations,
+    status,
+    error: stationsWithMeas.length > 0 ? undefined : 'Stations found but none have current measurements',
+    locationsFound,
+    locationsRetained: retained.length,
+    stationsWithMeasurements: stationsWithMeas.length,
+  };
 }

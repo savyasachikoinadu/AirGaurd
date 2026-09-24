@@ -107,7 +107,7 @@ function liveStationsToDemoStations(
 
     const { aqi, dominantPollutant } = ls.aqi !== undefined
       ? { aqi: ls.aqi, dominantPollutant: calculateCpcbAqi(pollutants).dominantPollutant }
-      : calculateCpcbAqi(pollutants);
+      : { aqi: 0, dominantPollutant: 'pm25' as const };
 
     const aqiCategory = getAqiCategory(aqi);
     const riskLevel = getAqiRiskLevel(aqi);
@@ -347,28 +347,48 @@ export function DashboardClient() {
   // Current air quality summary
   const currentSummary: AirQualitySummary | null = stations.length > 0
     ? (() => {
-        const avgAqi = Math.round(stations.reduce((a, s) => a + s.aqi, 0) / stations.length);
-        const avgPm25 = Math.round((stations.reduce((a, s) => a + s.pollutants.pm25, 0) / stations.length) * 10) / 10;
-        const avgPm10 = Math.round((stations.reduce((a, s) => a + s.pollutants.pm10, 0) / stations.length) * 10) / 10;
-        const avgNo2 = Math.round((stations.reduce((a, s) => a + s.pollutants.no2, 0) / stations.length) * 10) / 10;
-        const avgO3 = Math.round((stations.reduce((a, s) => a + s.pollutants.o3, 0) / stations.length) * 10) / 10;
-        const avgSo2 = Math.round((stations.reduce((a, s) => a + s.pollutants.so2, 0) / stations.length) * 10) / 10;
-        const avgCo = Math.round((stations.reduce((a, s) => a + s.pollutants.co, 0) / stations.length) * 100) / 100;
-        const avgTemp = Math.round((stations.reduce((a, s) => a + s.weather.temperatureC, 0) / stations.length) * 10) / 10;
-        const avgHum = Math.round(stations.reduce((a, s) => a + s.weather.humidity, 0) / stations.length);
-        const avgWind = Math.round((stations.reduce((a, s) => a + s.weather.windSpeedKph, 0) / stations.length) * 10) / 10;
-        const avgWindDir = Math.round(stations.reduce((a, s) => a + s.weather.windDirectionDeg, 0) / stations.length);
-        const avgPress = Math.round(stations.reduce((a, s) => a + s.weather.pressureMb, 0) / stations.length);
-        const avgPrecip = Math.round(stations.reduce((a, s) => a + s.weather.precipitationMm, 0) / stations.length * 10) / 10;
-        const avgVis = Math.round((stations.reduce((a, s) => a + s.weather.visibilityKm, 0) / stations.length) * 10) / 10;
+        // Only average over stations that have actual AQI (have measurements)
+        const stationsWithAqi = stations.filter((s) => s.aqi !== undefined && s.aqi > 0);
+        const stationsForAvg = stationsWithAqi.length > 0 ? stationsWithAqi : stations;
+        const n = stationsForAvg.length;
+        const avgAqi = Math.round(stationsForAvg.reduce((a, s) => a + (s.aqi || 0), 0) / n);
+        // Average pollutants only from stations that have them defined
+        const avgIfAny = (key: 'pm25' | 'pm10' | 'no2' | 'o3' | 'so2' | 'co') => {
+          const vals = stationsForAvg.map((s) => s.pollutants[key]).filter((v) => v !== undefined && v !== null) as number[];
+          if (vals.length === 0) return 0;
+          return Math.round((vals.reduce((a, v) => a + v, 0) / vals.length) * 10) / 10;
+        };
+        const avgPm25 = avgIfAny('pm25');
+        const avgPm10 = avgIfAny('pm10');
+        const avgNo2 = avgIfAny('no2');
+        const avgO3 = avgIfAny('o3');
+        const avgSo2 = avgIfAny('so2');
+        const avgCo = Math.round(avgIfAny('co') * 10) / 10;
+        const avgTemp = Math.round((stationsForAvg.reduce((a, s) => a + s.weather.temperatureC, 0) / n) * 10) / 10;
+        const avgHum = Math.round(stationsForAvg.reduce((a, s) => a + s.weather.humidity, 0) / n);
+        const avgWind = Math.round((stationsForAvg.reduce((a, s) => a + s.weather.windSpeedKph, 0) / n) * 10) / 10;
+        const avgWindDir = Math.round(stationsForAvg.reduce((a, s) => a + s.weather.windDirectionDeg, 0) / n);
+        const avgPress = Math.round(stationsForAvg.reduce((a, s) => a + s.weather.pressureMb, 0) / n);
+        const avgPrecip = Math.round(stationsForAvg.reduce((a, s) => a + s.weather.precipitationMm, 0) / n * 10) / 10;
+        const avgVis = Math.round((stationsForAvg.reduce((a, s) => a + s.weather.visibilityKm, 0) / n) * 10) / 10;
         const { dominantPollutant } = calculateCpcbAqi({
           pm25: avgPm25, pm10: avgPm10, no2: avgNo2, o3: avgO3, so2: avgSo2, co: avgCo,
         });
-        const source: DataSource = mode === 'LIVE' ? 'OPENAQ' : 'ASIA_DEMO_DATA';
+        // Determine the actual data source: only label as OPENAQ when real
+        // OpenAQ station observations exist; use OPEN_METEO when the fallback
+        // modelled reading is being shown.
+        const hasOpenAQMeasurements = stations.some(
+          (s) => s.source === 'OPENAQ' && s.aqi > 0
+        );
+        const source: DataSource = mode === 'LIVE'
+          ? (hasOpenAQMeasurements ? 'OPENAQ' : 'OPEN_METEO')
+          : 'ASIA_DEMO_DATA';
         const freshness = mode === 'LIVE'
-          ? (liveData?.stations[0]?.observedAt
-            ? `Observed ${new Date(liveData.stations[0].observedAt).toLocaleString('en-US', { hour: '2-digit', minute: '2-digit' })}`
-            : 'Live data')
+          ? (hasOpenAQMeasurements
+            ? (liveData?.stations.find((s) => s.source === 'OPENAQ' && s.observedAt)?.observedAt
+              ? `Observed ${new Date(liveData.stations.find((s) => s.source === 'OPENAQ')!.observedAt).toLocaleString('en-US', { hour: '2-digit', minute: '2-digit', month: 'short', day: 'numeric' })}`
+              : 'Live observation')
+            : 'MODELLED · Open-Meteo (no live station data)')
           : 'Generated on request (demo mode)';
         return {
           aqi: avgAqi,

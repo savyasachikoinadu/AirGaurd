@@ -66,11 +66,19 @@ async function fetchLiveData(location: LocationDef): Promise<LiveDataBundle> {
   if (weatherResult.error) errors.push(`Open-Meteo Weather: ${weatherResult.error}`);
   if (forecastResult.error) errors.push(`Open-Meteo Forecast: ${forecastResult.error}`);
 
-  // 2. Build stations list
+  // 2. Build stations list — keep all OpenAQ stations (even without measurements)
   let stations: LiveStationReading[] = openaqResult.stations;
 
-  // If OpenAQ returned no stations, fall back to Open-Meteo modelled current air
-  if (stations.length === 0 && openaqResult.status !== 'ok') {
+  // Check if any OpenAQ stations have actual measurements
+  const openaqStationsWithMeasurements = stations.filter(
+    (s) => s.pm25 !== undefined || s.pm10 !== undefined ||
+      s.no2 !== undefined || s.so2 !== undefined ||
+      s.co !== undefined || s.o3 !== undefined
+  );
+
+  // If OpenAQ returned no stations at all, fall back to Open-Meteo modelled current air
+  // This provides a city-level modelled reading so the dashboard isn't empty
+  if (stations.length === 0) {
     const modelledAir = await fetchOpenMeteoCurrentAir(center);
     if (modelledAir.reading) {
       stations = [modelledAir.reading];
@@ -79,8 +87,14 @@ async function fetchLiveData(location: LocationDef): Promise<LiveDataBundle> {
   }
 
   // 3. Determine provider statuses
+  // OpenAQ is 'ok' only when we have stations with actual measurements
+  const openaqStatus: LiveDataBundle['providerStatus']['openaq'] =
+    openaqStationsWithMeasurements.length > 0 ? 'ok' :
+    openaqResult.status === 'ok' ? 'no_stations' :
+    openaqResult.status;
+
   const providerStatus: LiveDataBundle['providerStatus'] = {
-    openaq: openaqResult.status as LiveDataBundle['providerStatus']['openaq'],
+    openaq: openaqStatus,
     openmeteo: (weatherResult.status === 'ok' || forecastResult.status === 'ok') ? 'ok' :
       (weatherResult.status === 'unreachable' && forecastResult.status === 'unreachable') ? 'unreachable' : 'error',
   };
