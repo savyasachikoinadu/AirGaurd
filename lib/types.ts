@@ -7,7 +7,94 @@ export type DataSource =
   | 'AI_ESTIMATE'
   | 'HISTORICAL_DATASET'
   | 'EXTERNAL_FORECAST'
-  | 'LIVE_SENSOR';
+  | 'LIVE_SENSOR'
+  | 'OPENAQ'
+  | 'OPEN_METEO';
+
+export type DataMode = 'LIVE' | 'DEMO';
+
+export type FreshnessLabel = 'LIVE' | 'RECENT' | 'STALE';
+
+export interface LiveStationReading {
+  stationId: string;
+  stationName: string;
+  latitude: number;
+  longitude: number;
+  city: string;
+  country: string;
+  provider: string;
+  source: 'OPENAQ' | 'OPEN_METEO' | 'DEMO';
+  observedAt: string;
+  pm25?: number;
+  pm10?: number;
+  no2?: number;
+  so2?: number;
+  co?: number;
+  o3?: number;
+  nh3?: number;
+  temperature?: number;
+  humidity?: number;
+  windSpeed?: number;
+  windDirection?: number;
+  aqi?: number;
+  aqiCategory?: AqiCategory;
+}
+
+export interface LiveWeatherData {
+  temperatureC: number;
+  humidity: number;
+  windSpeedKph: number;
+  windDirectionDeg: number;
+  pressureMb: number;
+  precipitationMm: number;
+  cloud: number;
+  visibilityKm: number;
+  observedAt: string;
+  source: 'OPEN_METEO' | 'DEMO';
+}
+
+export interface LiveForecastData {
+  timestamps: string[];
+  pm25: number[];
+  pm10: number[];
+  no2: number[];
+  o3: number[];
+  so2: number[];
+  co: number[];
+  aqi: number[];
+  aqiCategory: AqiCategory[];
+  source: 'OPEN_METEO' | 'MODEL_FORECAST';
+  updatedAt: string;
+}
+
+export interface LiveDataBundle {
+  stations: LiveStationReading[];
+  weather: LiveWeatherData | null;
+  forecast: LiveForecastData | null;
+  location: LocationDef;
+  mode: DataMode;
+  providerStatus: {
+    openaq: 'ok' | 'error' | 'no_key' | 'no_stations' | 'unreachable';
+    openmeteo: 'ok' | 'error' | 'unreachable';
+  };
+  lastUpdated: string;
+  errors: string[];
+}
+
+export interface DataQualityLive {
+  mode: DataMode;
+  liveStations: number;
+  stationsQueried: number;
+  stationsWithPm25: number;
+  stationsWithPm10: number;
+  newestObservation: string | null;
+  oldestObservation: string | null;
+  missingPollutants: string[];
+  openaqStatus: string;
+  openmeteoStatus: string;
+  staleObservations: number;
+  forecastSource: string;
+}
 
 export type AqiCategory =
   | 'Good'

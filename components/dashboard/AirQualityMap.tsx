@@ -11,6 +11,7 @@ interface AirQualityMapProps {
   gridCells?: GridCell[];
   layer: MapLayer;
   onStationClick?: (station: DemoStation) => void;
+  liveMode?: boolean;
   className?: string;
 }
 
@@ -37,7 +38,17 @@ function getGridLayerValue(cell: GridCell, layer: MapLayer): number {
   }
 }
 
-export function AirQualityMap({ location, stations, gridCells, layer, onStationClick, className }: AirQualityMapProps) {
+function getSourceLabel(station: DemoStation, isLive: boolean): string {
+  if (isLive) {
+    if (station.source === 'OPENAQ') return 'LIVE · OpenAQ';
+    if (station.source === 'OPEN_METEO') return 'LIVE · Open-Meteo Model';
+    if (station.source === 'LIVE_SENSOR') return 'LIVE SENSOR';
+    return 'LIVE DATA';
+  }
+  return 'DEMO SENSOR';
+}
+
+export function AirQualityMap({ location, stations, gridCells, layer, onStationClick, liveMode = false, className }: AirQualityMapProps) {
   const mapRef = useRef<L.Map | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const markersRef = useRef<L.Marker[]>([]);
@@ -109,6 +120,8 @@ export function AirQualityMap({ location, stations, gridCells, layer, onStationC
       const value = getLayerValue(station, layer);
       const aqiColor = getAqiColor(station.aqi);
       const category = getAqiCategory(station.aqi);
+      const sourceLabel = getSourceLabel(station, liveMode);
+      const sourceColor = liveMode ? '#16a34a' : '#0891b2';
 
       const markerSize = 28;
       const icon = L.divIcon({
@@ -134,7 +147,7 @@ export function AirQualityMap({ location, stations, gridCells, layer, onStationC
             PM10: ${station.pollutants.pm10} µg/m³<br/>
             NO₂: ${station.pollutants.no2} µg/m³
           </div>
-          <div style="font-size:10px;color:#0891b2;font-weight:500;">DEMO SENSOR</div>
+          <div style="font-size:10px;color:${sourceColor};font-weight:500;">${sourceLabel}</div>
         </div>
       `;
       marker.bindPopup(popupContent);
@@ -145,7 +158,7 @@ export function AirQualityMap({ location, stations, gridCells, layer, onStationC
 
       markersRef.current.push(marker);
     });
-  }, [stations, layer, onStationClick]);
+  }, [stations, layer, onStationClick, liveMode]);
 
   return <div ref={containerRef} className={className || 'h-full w-full'} />;
 }

@@ -23,6 +23,8 @@ export function getDataSourceLabel(source: DataSource): string {
     HISTORICAL_DATASET: 'HISTORICAL DATASET',
     EXTERNAL_FORECAST: 'EXTERNAL FORECAST',
     LIVE_SENSOR: 'LIVE SENSOR',
+    OPENAQ: 'LIVE · OpenAQ',
+    OPEN_METEO: 'LIVE · Open-Meteo',
   };
   return labels[source] || source;
 }
@@ -35,6 +37,8 @@ export function getDataSourceColor(source: DataSource): string {
     HISTORICAL_DATASET: '#64748b',
     EXTERNAL_FORECAST: '#059669',
     LIVE_SENSOR: '#16a34a',
+    OPENAQ: '#16a34a',
+    OPEN_METEO: '#059669',
   };
   return colors[source] || '#64748b';
 }

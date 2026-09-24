@@ -15,6 +15,7 @@ export function generateAlerts(
   grids: HotspotGrid[],
   threats: Threat[],
   location: LocationDef,
+  mode?: 'LIVE' | 'DEMO',
 ): Alert[] {
   const alerts: Alert[] = [];
   const now = new Date().toISOString();
@@ -106,17 +107,19 @@ export function generateAlerts(
     });
   }
 
-  // 6. Data quality alert (demo mode)
-  alerts.push({
-    id: 'alert-demo-mode',
-    type: 'Data Source Notice',
-    severity: 'INFO',
-    timestamp: now,
-    location: location.city,
-    reason: 'System operating in DEMO DATA mode. All values are fictional and deterministic.',
-    horizon: 0,
-    recommendedAction: 'Connect live data sources for operational use. Do not use demo data for real decision-making.',
-  });
+  // 6. Data quality alert (demo mode only)
+  if (mode !== 'LIVE') {
+    alerts.push({
+      id: 'alert-demo-mode',
+      type: 'Data Source Notice',
+      severity: 'INFO',
+      timestamp: now,
+      location: location.city,
+      reason: 'System operating in DEMO DATA mode. All values are fictional and deterministic.',
+      horizon: 0,
+      recommendedAction: 'Connect live data sources for operational use. Do not use demo data for real decision-making.',
+    });
+  }
 
   // Sort by severity
   const severityOrder: Record<AlertSeverity, number> = { CRITICAL: 0, WARNING: 1, WATCH: 2, INFO: 3 };
